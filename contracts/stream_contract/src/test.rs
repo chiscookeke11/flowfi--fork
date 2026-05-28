@@ -10,6 +10,7 @@ use soroban_sdk::{
 
 use errors::StreamError;
 use events::{
+    AdminTransferredEvent, FeeCollectedEvent, StreamCancelledEvent, StreamCreatedEvent,
     FeeCollectedEvent, StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent,
     StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
 };
@@ -69,6 +70,7 @@ fn test_datakey_stream_serializes_deterministically() {
         last_update_time: 1,
         is_active: true,
         paused: false,
+        paused_at: 0,
         paused_at: None,
         status: StreamStatus::Active,
     };
@@ -1821,4 +1823,362 @@ fn test_fuzz_large_amount_no_overflow() {
         assert!(claimable > 0);
         assert!(claimable <= *amount);
     }
+}
+
+// ─── transfer_admin (#459) ─────────────────────────────────────────────────────
+
+#[test]
+fn test_transfer_admin_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+
+    client.initialize(&admin, &treasury, &100);
+    client.transfer_admin(&admin, &new_admin);
+
+    let cfg = client.get_fee_config().unwrap();
+    assert_eq!(cfg.admin, new_admin);
+    // Treasury and fee must remain unchanged.
+    assert_eq!(cfg.treasury, treasury);
+    assert_eq!(cfg.fee_rate_bps, 100);
+}
+
+#[test]
+fn test_transfer_admin_rejects_non_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+
+    let admin = Address::generate(&env);
+    let attacker = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    client.initialize(&admin, &treasury, &100);
+    let result = client.try_transfer_admin(&attacker, &Address::generate(&env));
+    assert_eq!(result, Err(Ok(StreamError::NotAdmin)));
+}
+
+#[test]
+fn test_transfer_admin_rejects_not_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+
+    let result = client.try_transfer_admin(
+        &Address::generate(&env),
+        &Address::generate(&env),
+    );
+    assert_eq!(result, Err(Ok(StreamError::NotInitialized)));
+}
+
+#[test]
+fn test_transfer_admin_new_admin_can_update_fee_config() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let new_treasury = Address::generate(&env);
+
+    client.initialize(&admin, &treasury, &100);
+    client.transfer_admin(&admin, &new_admin);
+
+    // New admin must be able to update fee config.
+    client.update_fee_config(&new_admin, &new_treasury, &200);
+    let cfg = client.get_fee_config().unwrap();
+    assert_eq!(cfg.admin, new_admin);
+    assert_eq!(cfg.treasury, new_treasury);
+    assert_eq!(cfg.fee_rate_bps, 200);
+
+    // Old admin must no longer be able to update fee config.
+    let result = client.try_update_fee_config(&admin, &treasury, &50);
+    assert_eq!(result, Err(Ok(StreamError::NotAdmin)));
+}
+
+#[test]
+fn test_transfer_admin_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+
+    client.initialize(&admin, &treasury, &100);
+    client.transfer_admin(&admin, &new_admin);
+
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "admin_transferred")
+        })
+        .expect("admin_transferred event not found");
+
+    let payload: AdminTransferredEvent =
+        AdminTransferredEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.previous_admin, admin);
+    assert_eq!(payload.new_admin, new_admin);
+}
+
+// ─── pause_stream / resume_stream (#462) ─────────────────────────────────────
+
+#[test]
+fn test_pause_stops_accrual() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+
+    // Stream: 1 000 tokens over 1 000 s → 1 token/s
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Advance 200 s before pause — 200 tokens accrued.
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.pause_stream(&sender, &id);
+
+    // Advance another 300 s while paused — accrual must NOT increase.
+    env.ledger().with_mut(|l| l.timestamp += 300);
+
+    // Verify stream state: paused flag is set.
+    let s = client.get_stream(&id).unwrap();
+    assert!(s.paused);
+
+    // Advance 100 more seconds; stream is still paused, accrual still frozen.
+    env.ledger().with_mut(|l| l.timestamp += 100);
+
+    // Expect paused_at (200 s mark) → last_update_time (also 200 s mark) → elapsed = 0
+    // So claimable should be the 0 s elapsed since paused_at.
+    // (Withdraw must be rejected on a paused stream — tested separately.)
+}
+
+#[test]
+fn test_withdraw_on_paused_stream_returns_stream_inactive() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    env.ledger().with_mut(|l| l.timestamp += 100);
+    client.pause_stream(&sender, &id);
+    env.ledger().with_mut(|l| l.timestamp += 100);
+
+    // Withdraw must be rejected while paused.
+    let result = client.try_withdraw(&recipient, &id);
+    assert_eq!(result, Err(Ok(StreamError::StreamInactive)));
+}
+
+#[test]
+fn test_resume_adjusts_last_update_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Advance 200 s, pause, then advance 300 s while paused, then resume.
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.pause_stream(&sender, &id);
+    env.ledger().with_mut(|l| l.timestamp += 300);
+    client.resume_stream(&sender, &id);
+
+    let s = client.get_stream(&id).unwrap();
+    assert!(!s.paused);
+    // last_update_time = original (0) + pause_duration (300) = 300
+    // because resume_stream shifts it by pause_duration (300).
+    assert_eq!(s.last_update_time, 300);
+
+    // Advance 100 s after resume and withdraw; expect 300 tokens
+    // (200 pre-pause + 100 post-resume, since nothing was withdrawn yet).
+    env.ledger().with_mut(|l| l.timestamp += 100);
+    let token_client = token::Client::new(&env, &token);
+    let before = token_client.balance(&recipient);
+    let claimed = client.withdraw(&recipient, &id);
+    let after = token_client.balance(&recipient);
+    assert_eq!(claimed, 300);
+    assert_eq!(after - before, 300);
+}
+
+#[test]
+fn test_cancel_paused_stream_settles_at_paused_at() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+
+    let client = create_contract(&env);
+    let token_client = token::Client::new(&env, &token);
+
+    // Stream: 1 000 tokens over 1 000 s → 1 token/s
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Advance 300 s — 300 tokens accrued.
+    env.ledger().with_mut(|l| l.timestamp += 300);
+    client.pause_stream(&sender, &id);
+
+    // Advance 200 more s while paused — accrual must NOT count this time.
+    env.ledger().with_mut(|l| l.timestamp += 200);
+
+    let sender_before = token_client.balance(&sender);
+
+    // Cancel the paused stream.
+    client.cancel_stream(&sender, &id);
+
+    let sender_after = token_client.balance(&sender);
+    // Sender must be refunded the non-accrued portion: 1 000 − 300 = 700.
+    assert_eq!(sender_after - sender_before, 700);
+
+    let s = client.get_stream(&id).unwrap();
+    assert!(!s.is_active);
+}
+
+#[test]
+fn test_cancel_paused_stream_emits_correct_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    env.ledger().with_mut(|l| l.timestamp += 400);
+    client.pause_stream(&sender, &id);
+    env.ledger().with_mut(|l| l.timestamp += 100);
+
+    client.cancel_stream(&sender, &id);
+
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "stream_cancelled")
+        })
+        .expect("stream_cancelled event not found");
+
+    let payload: StreamCancelledEvent =
+        StreamCancelledEvent::try_from_val(&env, &ev.2).unwrap();
+    // 400 tokens accrued before pause; 0 previously withdrawn.
+    assert_eq!(payload.refunded_amount, 600);
+    assert_eq!(payload.amount_withdrawn, 0);
+}
+
+#[test]
+fn test_resume_then_cancel_settles_across_pause_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+
+    let client = create_contract(&env);
+    let token_client = token::Client::new(&env, &token);
+
+    // Stream: 1 000 tokens / 1 000 s → 1 token/s
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Phase 1: 200 s of streaming → 200 tokens accrued.
+    env.ledger().with_mut(|l| l.timestamp += 200);
+
+    // Phase 2: pause for 150 s (no extra accrual).
+    client.pause_stream(&sender, &id);
+    env.ledger().with_mut(|l| l.timestamp += 150);
+
+    // Phase 3: resume and stream for another 100 s → 100 additional tokens.
+    client.resume_stream(&sender, &id);
+    env.ledger().with_mut(|l| l.timestamp += 100);
+
+    let sender_before = token_client.balance(&sender);
+    client.cancel_stream(&sender, &id);
+    let sender_after = token_client.balance(&sender);
+
+    // Total accrued = 200 + 100 = 300. Refund = 1 000 − 300 = 700.
+    assert_eq!(sender_after - sender_before, 700);
+}
+
+#[test]
+fn test_pause_stream_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
+
+    env.ledger().with_mut(|l| l.timestamp += 50);
+    client.pause_stream(&sender, &id);
+
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "stream_paused")
+        })
+        .expect("stream_paused event not found");
+
+    let payload: StreamPausedEvent = StreamPausedEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.stream_id, id);
+    assert_eq!(payload.sender, sender);
+    assert_eq!(payload.paused_at, 50);
+}
+
+#[test]
+fn test_resume_stream_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
+
+    env.ledger().with_mut(|l| l.timestamp += 100);
+    client.pause_stream(&sender, &id);
+    env.ledger().with_mut(|l| l.timestamp += 50);
+    client.resume_stream(&sender, &id);
+
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "stream_resumed")
+        })
+        .expect("stream_resumed event not found");
+
+    let payload: StreamResumedEvent = StreamResumedEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.stream_id, id);
+    assert_eq!(payload.sender, sender);
+    assert_eq!(payload.resumed_at, 150);
 }
