@@ -1806,3 +1806,77 @@ fn test_fuzz_large_amount_no_overflow() {
         assert!(claimable <= *amount);
     }
 }
+
+#[test]
+fn test_fuzz_claimable_overflow_and_cancel_invariants() {
+    let env = Env::default();
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_address = Address::generate(&env);
+
+    let mut seed = 0x4f1bbcdcu64;
+    for iteration in 0..10_000 {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let deposited = 1 + ((seed >> 1) as i128 % 1_000_000_000_000);
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let withdrawn = (seed >> 1) as i128 % (deposited + 1);
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let duration = 1 + (seed % 1_000_000);
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let elapsed = seed % (duration.saturating_mul(4));
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let rate_per_second = if iteration % 97 == 0 {
+            i128::MAX
+        } else {
+            1 + (deposited / duration as i128) + ((seed >> 1) as i128 % 100_000)
+        };
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let paused = seed & 1 == 1;
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let pause_start = seed % (elapsed + 1);
+
+        let effective_elapsed = if paused { pause_start } else { elapsed };
+        let stream = Stream {
+            sender: sender.clone(),
+            recipient: recipient.clone(),
+            token_address: token_address.clone(),
+            rate_per_second,
+            deposited_amount: deposited,
+            withdrawn_amount: withdrawn,
+            start_time: 0,
+            last_update_time: 0,
+            is_active: true,
+            paused,
+            paused_at: if paused { Some(effective_elapsed) } else { None },
+            status: if paused { StreamStatus::Paused } else { StreamStatus::Active },
+        };
+
+        let claimable = StreamContract::calculate_claimable(&stream, elapsed);
+        let remaining = deposited - withdrawn;
+        let withdrawn_after_cancel = withdrawn.saturating_add(claimable);
+        let cancel_refund = deposited.saturating_sub(withdrawn_after_cancel);
+
+        assert!(
+            withdrawn <= deposited,
+            "Iteration {}: withdrawn {} > deposited {}",
+            iteration,
+            withdrawn,
+            deposited
+        );
+        assert!(
+            claimable <= remaining,
+            "Iteration {}: claimable {} > remaining {}",
+            iteration,
+            claimable,
+            remaining
+        );
+        assert!(
+            cancel_refund + withdrawn_after_cancel <= deposited,
+            "Iteration {}: cancel settlement {} + {} > deposited {}",
+            iteration,
+            cancel_refund,
+            withdrawn_after_cancel,
+            deposited
+        );
+    }
+}
