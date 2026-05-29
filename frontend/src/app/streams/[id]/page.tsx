@@ -484,6 +484,7 @@ export default function StreamDetailsPage() {
               <div className="mt-4 flex gap-2">
                 <input
                   type="number"
+                  aria-label="Top-up amount"
                   placeholder={`Amount in ${tokenSymbol}`}
                   value={topUpAmount}
                   onChange={(e) => setTopUpAmount(e.target.value)}
