@@ -7,7 +7,16 @@ export default defineConfig({
         setupFiles: [],
         include: ['tests/**/*.{test,spec}.ts', 'src/__tests__/**/*.{test,spec}.ts'],
         coverage: {
-            reporter: ['text', 'json', 'html'],
+            enabled: true,
+            provider: 'v8',
+            reportsDirectory: './coverage',
+            reporter: ['text', 'json', 'html', 'lcov'],
+            thresholds: {
+                statements: 60,
+                branches: 60,
+                functions: 60,
+                lines: 60,
+            },
         },
         testTimeout: 30000,
         hookTimeout: 30000,

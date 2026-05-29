@@ -421,7 +421,7 @@ impl StreamContract {
     ///
     /// # Overflow Protection
     /// - Uses `checked_mul` for rate_per_second * elapsed_seconds multiplication
-    /// - Caps at stream.deposited_amount if overflow would occur
+    /// - Caps at remaining deposited balance if overflow would occur
     /// - Uses `checked_sub` for deposited - already_withdrawn calculation
     /// - Overflow boundary: i128::MAX (~1.7e19) for both rate and duration
     fn calculate_claimable(stream: &Stream, now: u64) -> i128 {
@@ -440,13 +440,6 @@ impl StreamContract {
         };
         let elapsed = effective_now.saturating_sub(stream.last_update_time);
 
-        // Use checked_mul to prevent overflow when multiplying rate * elapsed
-        // If overflow would occur, cap at deposited_amount (full deposit)
-        let streamed = match (elapsed as i128).checked_mul(stream.rate_per_second) {
-            Some(result) => result,
-            None => return stream.deposited_amount, // Overflow: cap at full deposit
-        };
-
         // Use checked_sub for deposited - withdrawn calculation
         let remaining = match stream
             .deposited_amount
@@ -454,6 +447,13 @@ impl StreamContract {
         {
             Some(result) => result,
             None => 0, // Underflow: already withdrawn more than deposited
+        };
+
+        // Use checked_mul to prevent overflow when multiplying rate * elapsed.
+        // If overflow would occur, cap at the remaining balance.
+        let streamed = match (elapsed as i128).checked_mul(stream.rate_per_second) {
+            Some(result) => result,
+            None => return remaining,
         };
 
         streamed.min(remaining)
