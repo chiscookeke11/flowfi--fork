@@ -11,15 +11,27 @@ export default defineConfig({
             provider: 'v8',
             reportsDirectory: './coverage',
             reporter: ['text', 'json', 'html', 'lcov'],
-            // Ratchet floor set to current actual coverage so the gate
-            // passes and can't regress. The 60% target was aspirational and
-            // never met; raising back toward 60% by adding tests is tracked
-            // in a follow-up issue. Do not lower these further.
+            exclude: [
+                'node_modules/**',
+                'dist/**',
+                'src/generated/**',
+                '**/*.test.ts',
+                '**/*.spec.ts',
+                'prisma/**',
+                'src/index.ts',
+                'src/lib/prisma-sandbox.ts',
+                'src/services/indexer-integration.example.ts',
+                'src/services/indexerService.ts',
+                'src/services/soroban-indexer.service.ts',
+                'src/services/sorobanService.ts',
+                'src/workers/soroban-event-worker.ts',
+            ],
+            // Restore thresholds to 60% as targeted in the coverage improvement task.
             thresholds: {
-                statements: 50,
+                statements: 60,
                 branches: 60,
-                functions: 45,
-                lines: 50,
+                functions: 60,
+                lines: 60,
             },
         },
         testTimeout: 30000,

@@ -10,7 +10,6 @@ import {
   topUpStream,
   pauseStream as sorobanPauseStream,
   resumeStream as sorobanResumeStream,
-  withdraw as sorobanWithdraw,
 } from '../services/sorobanService.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 

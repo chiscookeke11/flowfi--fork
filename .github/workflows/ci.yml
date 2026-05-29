@@ -123,11 +123,20 @@ jobs:
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "contracts -> target"
+
+      - name: Check Formatting
+        run: cargo fmt --all -- --check
+        working-directory: contracts
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: contracts
 
       - name: Build Contracts
         run: cargo build --target wasm32-unknown-unknown --release
