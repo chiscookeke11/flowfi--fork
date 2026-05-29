@@ -10,9 +10,9 @@ use soroban_sdk::{
 
 use errors::StreamError;
 use events::{
-    AdminTransferredEvent, FeeCollectedEvent, StreamCancelledEvent, StreamCreatedEvent,
-    FeeCollectedEvent, StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent,
-    StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
+    AdminTransferredEvent, FeeCollectedEvent, FeeConfigUpdatedEvent, InitializedEvent,
+    StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent, StreamPausedEvent,
+    StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use types::{DataKey, Stream, StreamStatus};
 
@@ -181,6 +181,64 @@ fn test_update_fee_config_rejects_invalid_fee_rate() {
     client.initialize(&admin, &treasury, &500);
     let result = client.try_update_fee_config(&admin, &treasury, &1001);
     assert_eq!(result, Err(Ok(StreamError::InvalidFeeRate)));
+}
+
+#[test]
+fn test_initialize_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    client.initialize(&admin, &treasury, &100);
+
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "initialized")
+        })
+        .expect("initialized event not found");
+
+    let payload: InitializedEvent =
+        InitializedEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.admin, admin);
+    assert_eq!(payload.treasury, treasury);
+    assert_eq!(payload.fee_rate_bps, 100);
+}
+
+#[test]
+fn test_update_fee_config_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+
+    let admin = Address::generate(&env);
+    let old_treasury = Address::generate(&env);
+    let new_treasury = Address::generate(&env);
+
+    client.initialize(&admin, &old_treasury, &500);
+    client.update_fee_config(&admin, &new_treasury, &300);
+
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "fee_config_updated")
+        })
+        .expect("fee_config_updated event not found");
+
+    let payload: FeeConfigUpdatedEvent =
+        FeeConfigUpdatedEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.admin, admin);
+    assert_eq!(payload.old_treasury, old_treasury);
+    assert_eq!(payload.new_treasury, new_treasury);
+    assert_eq!(payload.old_fee_rate_bps, 500);
+    assert_eq!(payload.new_fee_rate_bps, 300);
 }
 
 // ─── create_stream ────────────────────────────────────────────────────────────

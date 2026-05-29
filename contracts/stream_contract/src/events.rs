@@ -70,6 +70,30 @@ pub struct FeeCollectedEvent {
     pub token: Address,
 }
 
+/// Emitted once during one-time protocol initialization.
+///
+/// Topic: `("initialized",)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitializedEvent {
+    pub admin: Address,
+    pub treasury: Address,
+    pub fee_rate_bps: u32,
+}
+
+/// Emitted when the fee configuration (treasury address or fee rate) is updated.
+///
+/// Topic: `("fee_config_updated",)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeConfigUpdatedEvent {
+    pub admin: Address,
+    pub old_treasury: Address,
+    pub new_treasury: Address,
+    pub old_fee_rate_bps: u32,
+    pub new_fee_rate_bps: u32,
+}
+
 /// Emitted when the protocol admin is transferred to a new address.
 ///
 /// Topic: `("admin_transferred",)`

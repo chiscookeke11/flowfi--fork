@@ -12,9 +12,9 @@ use soroban_sdk::{contract, contractimpl, token, vec, Address, Env, InvokeError,
 
 use errors::StreamError;
 use events::{
-    AdminTransferredEvent, FeeCollectedEvent, StreamCancelledEvent, StreamCreatedEvent,
-    FeeCollectedEvent, StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent,
-    StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
+    AdminTransferredEvent, FeeCollectedEvent, FeeConfigUpdatedEvent, InitializedEvent,
+    StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent, StreamPausedEvent,
+    StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use storage::{
     config_exists, load_config, load_stream, next_stream_id, save_config, save_stream,
@@ -55,11 +55,21 @@ impl StreamContract {
         save_config(
             &env,
             &ProtocolConfig {
+                admin: admin.clone(),
+                treasury: treasury.clone(),
+                fee_rate_bps,
+            },
+        );
+
+        env.events().publish(
+            (Symbol::new(&env, "initialized"),),
+            InitializedEvent {
                 admin,
                 treasury,
                 fee_rate_bps,
             },
         );
+
         Ok(())
     }
 
@@ -88,11 +98,23 @@ impl StreamContract {
         save_config(
             &env,
             &ProtocolConfig {
-                admin: config.admin,
-                treasury,
+                admin: config.admin.clone(),
+                treasury: treasury.clone(),
                 fee_rate_bps,
             },
         );
+
+        env.events().publish(
+            (Symbol::new(&env, "fee_config_updated"),),
+            FeeConfigUpdatedEvent {
+                admin,
+                old_treasury: config.treasury,
+                new_treasury: treasury,
+                old_fee_rate_bps: config.fee_rate_bps,
+                new_fee_rate_bps: fee_rate_bps,
+            },
+        );
+
         Ok(())
     }
 
