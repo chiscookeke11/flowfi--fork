@@ -29,7 +29,7 @@ class MemoryCache {
       this.misses++;
       return null;
     }
-    if (Date.now() > item.expiresAt) {
+    if (Date.now() >= item.expiresAt) {
       this.cache.delete(key);
       this.misses++;
       return null;
@@ -54,6 +54,10 @@ class MemoryCache {
   getMetadata(key: string) {
     const item = this.cache.get(key);
     if (!item) return null;
+    if (Date.now() >= item.expiresAt) {
+      this.cache.delete(key);
+      return null;
+    }
     return {
       createdAt: new Date(item.createdAt).toISOString(),
       expiresAt: new Date(item.expiresAt).toISOString(),
@@ -73,7 +77,7 @@ class MemoryCache {
   cleanup(): void {
     const now = Date.now();
     for (const [key, item] of this.cache.entries()) {
-      if (now > item.expiresAt) {
+      if (now >= item.expiresAt) {
         this.cache.delete(key);
       }
     }
