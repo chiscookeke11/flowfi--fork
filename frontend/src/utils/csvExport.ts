@@ -2,7 +2,7 @@
 
 type CsvRow = Record<string, unknown>;
 
-const escapeCsvCell = (value: unknown): string => {
+export const escapeCsvCell = (value: unknown): string => {
     if (value === null || value === undefined) {
         return '';
     }
