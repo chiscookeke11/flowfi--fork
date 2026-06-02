@@ -5,6 +5,10 @@ export default defineConfig({
         environment: 'node',
         globals: true,
         setupFiles: [],
+        // Provide a stable JWT_SECRET so verifyJwt is deterministic in tests.
+        env: {
+          JWT_SECRET: 'flowfi-test-secret-do-not-use-in-production',
+        },
         include: ['tests/**/*.{test,spec}.ts'],
         coverage: {
             enabled: true,

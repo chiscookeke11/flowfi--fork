@@ -71,10 +71,10 @@ export function useModalDialog({
       }
     };
 
-    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
 
     return () => {
-      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keydown", handleKeyDown);
       document.body.style.overflow = "";
       previouslyFocusedRef.current?.focus();
     };
