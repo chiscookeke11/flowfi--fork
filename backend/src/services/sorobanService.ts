@@ -54,7 +54,6 @@ function decodeAddress(val: xdr.ScVal): string {
     return StrKey.encodeEd25519PublicKey(addr.accountId().ed25519());
   }
   const hash = addr.contractId();
-  // Convert Hash (Opaque[]) to Buffer before passing to encodeContract
   return StrKey.encodeContract(Buffer.from(hash as unknown as Uint8Array));
 }
 
@@ -222,7 +221,7 @@ export async function pauseStream(
     const { Address } = await import('@stellar/stellar-sdk');
 
     const senderAddr = new Address(senderAddress);
-    
+
     await simulateContractCall('pause_stream', [
       senderAddr.toScVal(),
       nativeToScVal(streamId, { type: 'u64' }),
@@ -256,7 +255,7 @@ export async function resumeStream(
     const { Address } = await import('@stellar/stellar-sdk');
 
     const senderAddr = new Address(senderAddress);
-    
+
     await simulateContractCall('resume_stream', [
       senderAddr.toScVal(),
       nativeToScVal(streamId, { type: 'u64' }),

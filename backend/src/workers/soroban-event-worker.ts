@@ -50,7 +50,7 @@ export function decodeAddress(val: xdr.ScVal): string {
   ) {
     return StrKey.encodeEd25519PublicKey(addr.accountId().ed25519());
   }
-  // addr.contractId() returns a Hash (Opaque[])
+  // addr.contractId() returns a Hash (Opaque[]); cast to Uint8Array for encodeContract
   const hash = addr.contractId();
   return StrKey.encodeContract(Buffer.from(hash as unknown as Uint8Array));
 }
