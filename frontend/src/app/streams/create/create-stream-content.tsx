@@ -1,13 +1,5 @@
-import type { Metadata } from "next";
-import CreateStreamContent from "./create-stream-content";
+"use client";
 
-export const metadata: Metadata = {
-  title: "Create Stream | FlowFi",
-  description: "Set up a new real-time payment stream.",
-};
-
-export default function CreateStreamPage() {
-  return <CreateStreamContent />;
 import React, { useState } from "react";
 import {
   createStream,
@@ -18,7 +10,6 @@ import {
   TOKEN_ADDRESSES
 } from "@/lib/soroban";
 import { hasValidPrecision, validateAmountInput } from "@/utils/amount";
-import { isValidStellarPublicKey } from "@/lib/stellar";
 import { toast } from "react-hot-toast";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -27,7 +18,7 @@ import { useWallet } from "@/context/wallet-context";
 
 const TOKEN_DECIMALS = 7;
 
-export default function CreateStreamPage() {
+export default function CreateStreamContent() {
   const { status, session } = useWallet();
   const router = useRouter();
   const [nowTimestamp] = useState(() => Date.now());
@@ -37,7 +28,7 @@ export default function CreateStreamPage() {
     recipient: "",
     token: "XLM",
     amount: "",
-    duration: "30", // days
+    duration: "30",
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -47,27 +38,9 @@ export default function CreateStreamPage() {
       return;
     }
 
-    // Validate recipient
-    if (!formData.recipient.trim()) {
-      toast.error("Recipient address is required");
-      return;
-    }
-    if (!isValidStellarPublicKey(formData.recipient)) {
-      toast.error("Invalid Stellar public key format");
-      return;
-    }
-
-    // Validate amount
     const validationError = validateAmountInput(formData.amount, TOKEN_DECIMALS);
     if (validationError) {
       toast.error(validationError);
-      return;
-    }
-
-    // Validate duration
-    const durationNum = parseFloat(formData.duration);
-    if (isNaN(durationNum) || durationNum <= 0) {
-      toast.error("Duration must be a positive number");
       return;
     }
 
@@ -89,7 +62,6 @@ export default function CreateStreamPage() {
       if (result.success) {
         setTxState("confirming");
         toast.success("Stream created successfully!");
-        // Small delay to allow indexer to catch up
         setTimeout(() => {
           router.push("/dashboard");
         }, 2000);
@@ -113,21 +85,8 @@ export default function CreateStreamPage() {
     }
   };
 
-  // Inline validation feedback for the amount field. validateAmountInput
-  // returns an error message when invalid and null when valid. Only show it
-  // once the user has typed something — the empty case is handled on submit.
   const amountError = formData.amount
     ? validateAmountInput(formData.amount, TOKEN_DECIMALS)
-    : null;
-
-  const recipientError = formData.recipient
-    ? (!isValidStellarPublicKey(formData.recipient) ? "Invalid Stellar public key format" : null)
-    : null;
-
-  const durationError = formData.duration
-    ? (isNaN(Number(formData.duration)) || Number(formData.duration) <= 0
-      ? "Duration must be a positive number"
-      : null)
     : null;
 
   return (
@@ -154,16 +113,11 @@ export default function CreateStreamPage() {
             <input
               type="text"
               placeholder="G..."
-              className={`w-full rounded-xl border ${
-                recipientError ? "border-red-500 focus:border-red-500" : "border-slate-800 focus:border-accent"
-              } bg-slate-900/50 p-4 outline-none transition-colors`}
+              className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
               value={formData.recipient}
               onChange={(e) => setFormData({ ...formData, recipient: e.target.value })}
               required
             />
-            {recipientError && (
-              <p className="text-xs text-red-400 mt-1">{recipientError}</p>
-            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -191,13 +145,10 @@ export default function CreateStreamPage() {
                 type="text"
                 inputMode="decimal"
                 placeholder="0.00"
-                className={`w-full rounded-xl border ${
-                  amountError ? "border-red-500 focus:border-red-500" : "border-slate-800 focus:border-accent"
-                } bg-slate-900/50 p-4 outline-none transition-colors`}
+                className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
                 value={formData.amount}
                 onChange={(e) => {
                   const newValue = e.target.value;
-                  // Only allow valid number characters and check precision
                   if (newValue === '' || /^\d*\.?\d*$/.test(newValue)) {
                     if (hasValidPrecision(newValue, TOKEN_DECIMALS)) {
                       setFormData({ ...formData, amount: newValue });
@@ -219,23 +170,18 @@ export default function CreateStreamPage() {
             <input
               type="number"
               placeholder="30"
-              className={`w-full rounded-xl border ${
-                durationError ? "border-red-500 focus:border-red-500" : "border-slate-800 focus:border-accent"
-              } bg-slate-900/50 p-4 outline-none transition-colors`}
+              className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
               value={formData.duration}
               onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
               required
             />
-            {durationError && (
-              <p className="text-xs text-red-400 mt-1">{durationError}</p>
-            )}
           </div>
 
           <div className="rounded-2xl bg-accent/5 p-6 space-y-4">
             <div className="flex justify-between items-center text-sm">
               <span className="text-slate-400">Streaming Rate</span>
               <span className="font-mono font-medium text-accent">
-                {formData.amount && formData.duration && Number(formData.duration) > 0
+                {formData.amount && formData.duration 
                   ? (Number(formData.amount) / (Number(formData.duration) * 86400)).toFixed(8)
                   : "0.00000000"} {formData.token}/sec
               </span>
@@ -243,16 +189,14 @@ export default function CreateStreamPage() {
             <div className="flex justify-between items-center text-sm">
               <span className="text-slate-400">Estimated End Date</span>
               <span className="font-medium">
-                {formData.duration && Number(formData.duration) > 0
-                  ? new Date(nowTimestamp + Number(formData.duration) * 86400000).toLocaleDateString()
-                  : "—"}
+                {new Date(nowTimestamp + Number(formData.duration || 0) * 86400000).toLocaleDateString()}
               </span>
             </div>
           </div>
 
           <button
             type="submit"
-            disabled={loading || status !== "connected" || !!amountError || !!recipientError || !!durationError}
+            disabled={loading || status !== "connected"}
             className="w-full rounded-xl bg-accent py-4 text-lg font-bold text-background transition-all hover:opacity-90 disabled:opacity-50 active:scale-[0.98]"
           >
             {getButtonText()}
